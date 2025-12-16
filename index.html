@@ -74,7 +74,7 @@
       border-radius:12px;
       -webkit-user-select:none;
       user-select:none;
-      image-rendering:auto; /* важно: optimizeQuality иногда даёт странный шимер */
+      image-rendering:auto;
       touch-action:none;
     }
 
@@ -277,13 +277,13 @@
     }
     .lb-top5{ background:#fff8d6; }
 
-    /* HUD (счётчик как DOM, чтобы не мерцал) */
+    /* ✅ HUD (счётчик как DOM) — меньше на 15% */
     #hudScore{
       position:absolute;
       left:10px;
       top:8px;
       z-index:90;
-      font:700 18px Futura, Arial, sans-serif;
+      font:700 15px Futura, Arial, sans-serif; /* было 18px */
       color:#000;
       text-shadow:0 1px 0 rgba(255,255,255,.35);
       user-select:none;
@@ -365,7 +365,6 @@
      Canvas / DOM
      ========================== */
   const canvas = document.getElementById('game');
-  // ✅ Убрали desynchronized:true (часто даёт tearing/мерцание на ПК)
   const ctx = canvas.getContext('2d', { alpha:true });
 
   const container = document.getElementById('container');
@@ -400,7 +399,6 @@
   const COIL_W = 128;
   const COIL_H = 120;
 
-  /* ✅ Имена соответствуют файлам TipA-1.webp, TipB-2.webp ... */
   const FLOOR_TYPES = [
     { id: 'A', label: 'Tip A', filePrefix: 'TipA-', variants: 2, w: 155, h: 121 },
     { id: 'B', label: 'Tip B', filePrefix: 'TipB-', variants: 3, w: 190, h: 149 },
@@ -411,7 +409,9 @@
 
   const FLOOR_IMAGES = {};
   FLOOR_TYPES.forEach(t => FLOOR_IMAGES[t.id] = []);
-  const LAST_SKIN_IDX = {};
+
+  /* ✅ Заглушка: не даём спавнить 2 одинаковых скина подряд (на каждый тип) */
+  const LAST_SKIN_IDX = {}; // typeId -> lastIdx
 
   let backgroundImg = null;
   let bonusImg = null;
@@ -445,13 +445,8 @@
   let lastCssW = 0, lastCssH = 0;
   let resizeTimer = 0;
 
-  // ✅ Привязка к пиксельной сетке (убирает “моргание” при движении)
-  function snap(v){
-    return Math.round(v * DPR) / DPR;
-  }
-  function snapRect(x,y,w,h){
-    return { x:snap(x), y:snap(y), w:snap(w), h:snap(h) };
-  }
+  function snap(v){ return Math.round(v * DPR) / DPR; }
+  function snapRect(x,y,w,h){ return { x:snap(x), y:snap(y), w:snap(w), h:snap(h) }; }
 
   function doResizeCanvas(){
     const vw = window.innerWidth;
@@ -482,7 +477,6 @@
     container.style.width = cssW + 'px';
     container.style.height = cssH + 'px';
 
-    // ✅ Мобила станет чётче, ПК тоже (без перегруза)
     const dprCap = 2.0;
     DPR = Math.min(dprCap, Math.max(1, window.devicePixelRatio || 1));
 
@@ -733,7 +727,14 @@
     ctx.restore();
   }
 
-  function spawnFallingBlocks(blocks){
+  /* ✅ Falling animation:
+     - по умолчанию как раньше (с вращением/разлётом)
+     - для анти-бонуса при промахе: вертикально вниз и без наклона
+  */
+  function spawnFallingBlocks(blocks, opts={}){
+    const vertical = !!opts.vertical;
+    const noRot = !!opts.noRot;
+
     for (const b of blocks){
       fallingBlocks.push({
         x: b.x + b.w / 2,
@@ -742,11 +743,11 @@
         h: b.h,
         img: b.img,
         color: b.color,
-        vy: 3 + Math.random() * 2,
-        vx: (Math.random() - 0.5) * 1.5,
+        vy: vertical ? (3.6) : (3 + Math.random() * 2),
+        vx: vertical ? 0 : ((Math.random() - 0.5) * 1.5),
         alpha: 1,
-        rot: (Math.random() - 0.5) * 0.4,
-        vrot: (Math.random() - 0.5) * 0.08
+        rot: noRot ? 0 : ((Math.random() - 0.5) * 0.4),
+        vrot: noRot ? 0 : ((Math.random() - 0.5) * 0.08)
       });
     }
   }
@@ -794,12 +795,18 @@
     return pool[randInt(0, pool.length - 1)];
   }
 
+  /* ✅ Заглушка anti-repeat: не выдаём тот же скин подряд */
   function randomFloorImage(typeId){
     const arr = FLOOR_IMAGES[typeId] || [];
     if (!arr.length) return null;
-    let lastIdx = LAST_SKIN_IDX[typeId];
+
+    const lastIdx = (LAST_SKIN_IDX[typeId] ?? -1);
     let idx = randInt(0, arr.length - 1);
-    if (arr.length > 1 && idx === lastIdx) idx = (idx + 1) % arr.length;
+
+    if (arr.length > 1 && idx === lastIdx){
+      idx = (idx + 1) % arr.length;
+    }
+
     LAST_SKIN_IDX[typeId] = idx;
     return arr[idx];
   }
@@ -813,9 +820,6 @@
     loaderBarFill.style.width = p + '%';
   }
 
-  /* ==========================
-     ✅ PRELOAD строго .webp + BASE
-     ========================== */
   function loadImageOnce(url, timeout=9000){
     return new Promise((resolve, reject) => {
       let done=false;
@@ -1062,7 +1066,7 @@
       removedHeight += b.h;
     }
 
-    spawnFallingBlocks(removedBlocks);
+    spawnFallingBlocks(removedBlocks); // как было: обычное падение (с наклоном) у снесённых этажей
 
     score = Math.max(0, tower.length - 1);
     targetOffsetY = Math.max(0, targetOffsetY - removedHeight);
@@ -1112,6 +1116,9 @@
 
     if (current.isAntiBonus){
       if (!hit){
+        /* ✅ Анти-бонус при промахе: падает как промахнувшийся блок,
+              но строго вертикально и без вращения */
+        spawnFallingBlocks([current], { vertical:true, noRot:true });
         current = null; isDropping = false; spawnBlock(); return;
       } else {
         applyAntiBonusHit();
@@ -1120,7 +1127,7 @@
     }
 
     if (!hit){
-      spawnFallingBlocks([current]);
+      spawnFallingBlocks([current]); // обычный промах
       current = null;
       isDropping = false;
       gameOver = true;
@@ -1297,7 +1304,6 @@
 
     drawBagFront();
 
-    // ✅ HUD-счётчик как DOM — обновляем только когда меняется
     if (score !== lastHudScore){
       hudScore.textContent = 'Подарков собрано: ' + score;
       hudScore.style.color = (score >= 50) ? '#fff' : '#000';
@@ -1544,3 +1550,4 @@
 </script>
 </body>
 </html>
+
