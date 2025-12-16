@@ -447,7 +447,7 @@
       cssH = Math.floor(cssW * aspect);
     }
 
-    if (Math.abs(cssW - lastCssW) < 2 && Math.abs(cssH - lastCssH) < 2) return;
+   if (Math.abs(cssW - lastCssW) < 12 && Math.abs(cssH - lastCssH) < 12) return;
     lastCssW = cssW; lastCssH = cssH;
 
     canvas.style.width = cssW + 'px';
@@ -455,7 +455,7 @@
     container.style.width = cssW + 'px';
     container.style.height = cssH + 'px';
 
-    const dprCap = IS_MOBILE ? 1.5 : 1.8;
+    const dprCap = IS_MOBILE ? 1.25 : 1.6;
     DPR = Math.min(dprCap, Math.max(1, window.devicePixelRatio || 1));
 
     canvas.width = Math.round(cssW * DPR);
@@ -475,10 +475,10 @@
     if (stars.length) initStars();
   }
 
-  function scheduleResize(){
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(doResizeCanvas, IS_MOBILE ? 120 : 0);
-  }
+function scheduleResize(){
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(doResizeCanvas, 120);
+}
 
   window.addEventListener('resize', scheduleResize);
   window.addEventListener('orientationchange', ()=>{ setTimeout(scheduleResize, 120); });
@@ -786,27 +786,7 @@
   /* ==========================
      ✅ PRELOAD строго .webp + BASE
      ========================== */
-  function loadImageOnce(url, timeout=9000){
-    return new Promise((resolve, reject) => {
-      let done=false;
-      const img = new Image();
-      img.decoding = 'async';
-      img.loading = 'eager';
-
-      const to = setTimeout(()=>{
-        if(!done){
-          done=true;
-          img.src='';
-          reject(new Error('timeout'));
-        }
-      }, timeout);
-
-      img.onload = ()=>{ if(done) return; done=true; clearTimeout(to); resolve(img); };
-      img.onerror = ()=>{ if(done) return; done=true; clearTimeout(to); reject(new Error('error')); };
-
-      img.src = url;
-    });
-  }
+function loadImageOnce
 
   async function tryLoadWebp(fileName, bust=false){
     const url = asset(fileName) + (bust ? `?v=${Date.now()}` : '');
@@ -1509,3 +1489,4 @@
 </script>
 </body>
 </html>
+
