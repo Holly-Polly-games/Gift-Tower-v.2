@@ -74,7 +74,7 @@
       border-radius:12px;
       -webkit-user-select:none;
       user-select:none;
-      image-rendering:optimizeQuality;
+      image-rendering:auto; /* важно: optimizeQuality иногда даёт странный шимер */
       touch-action:none;
     }
 
@@ -276,6 +276,19 @@
       color:#000;
     }
     .lb-top5{ background:#fff8d6; }
+
+    /* HUD (счётчик как DOM, чтобы не мерцал) */
+    #hudScore{
+      position:absolute;
+      left:10px;
+      top:8px;
+      z-index:90;
+      font:700 18px Futura, Arial, sans-serif;
+      color:#000;
+      text-shadow:0 1px 0 rgba(255,255,255,.35);
+      user-select:none;
+      pointer-events:none;
+    }
   </style>
 </head>
 <body>
@@ -287,6 +300,8 @@
 
 <div id="container" role="application" aria-label="Игра Башня">
   <canvas id="game" aria-hidden="false"></canvas>
+
+  <div id="hudScore">Подарков собрано: 0</div>
 
   <div id="loaderOverlay" class="loader-overlay">
     <div class="loader-box">
@@ -350,7 +365,8 @@
      Canvas / DOM
      ========================== */
   const canvas = document.getElementById('game');
-  const ctx = canvas.getContext('2d', { alpha:true, desynchronized:true });
+  // ✅ Убрали desynchronized:true (часто даёт tearing/мерцание на ПК)
+  const ctx = canvas.getContext('2d', { alpha:true });
 
   const container = document.getElementById('container');
   const startOverlay = document.getElementById('startOverlay');
@@ -365,6 +381,9 @@
   const lbList = document.getElementById('lbList');
   const lbClose = document.getElementById('lbClose');
   const lbLoading = document.getElementById('lbLoading');
+
+  const hudScore = document.getElementById('hudScore');
+  let lastHudScore = -1;
 
   let DPR = 1;
   let canvasW = 0, canvasH = 0;
@@ -426,6 +445,14 @@
   let lastCssW = 0, lastCssH = 0;
   let resizeTimer = 0;
 
+  // ✅ Привязка к пиксельной сетке (убирает “моргание” при движении)
+  function snap(v){
+    return Math.round(v * DPR) / DPR;
+  }
+  function snapRect(x,y,w,h){
+    return { x:snap(x), y:snap(y), w:snap(w), h:snap(h) };
+  }
+
   function doResizeCanvas(){
     const vw = window.innerWidth;
     const vh = Math.min(
@@ -455,7 +482,8 @@
     container.style.width = cssW + 'px';
     container.style.height = cssH + 'px';
 
-    const dprCap = IS_MOBILE ? 1.25 : 1.6;
+    // ✅ Мобила станет чётче, ПК тоже (без перегруза)
+    const dprCap = 2.0;
     DPR = Math.min(dprCap, Math.max(1, window.devicePixelRatio || 1));
 
     canvas.width = Math.round(cssW * DPR);
@@ -466,6 +494,7 @@
 
     ctx.setTransform(DPR * CAMERA_SCALE, 0, 0, DPR * CAMERA_SCALE, 0, 0);
     ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
 
     const FLOOR_OFFSET = -30;
     HORIZON_Y = canvasH - HORIZON_FLOORS * BLOCK_HEIGHT - FLOOR_OFFSET;
@@ -746,11 +775,12 @@
       ctx.translate(screenX, screenY);
       ctx.rotate(fb.rot);
 
+      const r = snapRect(-fb.w/2, -fb.h/2, fb.w, fb.h);
       if (fb.img){
-        ctx.drawImage(fb.img, -fb.w/2, -fb.h/2, fb.w, fb.h);
+        ctx.drawImage(fb.img, r.x, r.y, r.w, r.h);
       } else {
         ctx.fillStyle = fb.color || '#66bb6a';
-        ctx.fillRect(-fb.w/2, -fb.h/2, fb.w, fb.h);
+        ctx.fillRect(r.x, r.y, r.w, r.h);
       }
       ctx.restore();
     }
@@ -786,40 +816,31 @@
   /* ==========================
      ✅ PRELOAD строго .webp + BASE
      ========================== */
-
   function loadImageOnce(url, timeout=9000){
     return new Promise((resolve, reject) => {
-      let done = false;
+      let done=false;
       const img = new Image();
       img.decoding = 'async';
       img.loading = 'eager';
 
-      const to = setTimeout(() => {
-        if (done) return;
-        done = true;
-        try { img.src = ''; } catch(_) {}
-        reject(new Error('timeout'));
+      const to = setTimeout(()=>{
+        if(!done){
+          done=true;
+          img.src='';
+          reject(new Error('timeout'));
+        }
       }, timeout);
 
-      img.onload = () => {
-        if (done) return;
-        const finalize = () => {
-          if (done) return;
-          done = true;
-          clearTimeout(to);
-          resolve(img);
-        };
-
-        if (typeof img.decode === 'function'){
-          img.decode().then(finalize).catch(finalize);
-        } else {
-          finalize();
-        }
+      img.onload = ()=>{
+        if(done) return;
+        done=true;
+        clearTimeout(to);
+        resolve(img);
       };
 
-      img.onerror = () => {
-        if (done) return;
-        done = true;
+      img.onerror = ()=>{
+        if(done) return;
+        done=true;
         clearTimeout(to);
         reject(new Error('error'));
       };
@@ -845,9 +866,7 @@
         files.push(`${t.filePrefix}${i}.webp`);
       }
     }
-    files.push('background.webp','bonus.webp','coil.webp','bag1.webp','bag2.webp');
-    // girlanda.webp опционально, если не используешь — не страшно
-    files.push('girlanda.webp');
+    files.push('background.webp','bonus.webp','coil.webp','bag1.webp','bag2.webp','girlanda.webp');
     return files;
   }
 
@@ -914,7 +933,8 @@
       const worldBottom = backgroundWorldBottom;
       const worldTop = worldBottom - targetH;
       const screenY = worldTop + offsetY;
-      ctx.drawImage(backgroundImg, 0, screenY, targetW, targetH);
+      const r = snapRect(0, screenY, targetW, targetH);
+      ctx.drawImage(backgroundImg, r.x, r.y, r.w, r.h);
     }
   }
 
@@ -929,18 +949,20 @@
 
   function drawBagBack(){
     if (!bagBackImg) return;
-    const r = getBagWorldRect();
-    const sy = r.y + offsetY;
-    if (sy > canvasH + 200 || sy + r.h < -200) return;
-    ctx.drawImage(bagBackImg, r.x, sy, r.w, r.h);
+    const r0 = getBagWorldRect();
+    const sy = r0.y + offsetY;
+    if (sy > canvasH + 200 || sy + r0.h < -200) return;
+    const r = snapRect(r0.x, sy, r0.w, r0.h);
+    ctx.drawImage(bagBackImg, r.x, r.y, r.w, r.h);
   }
 
   function drawBagFront(){
     if (!bagFrontImg) return;
-    const r = getBagWorldRect();
-    const sy = r.y + offsetY;
-    if (sy > canvasH + 200 || sy + r.h < -200) return;
-    ctx.drawImage(bagFrontImg, r.x, sy, r.w, r.h);
+    const r0 = getBagWorldRect();
+    const sy = r0.y + offsetY;
+    if (sy > canvasH + 200 || sy + r0.h < -200) return;
+    const r = snapRect(r0.x, sy, r0.w, r0.h);
+    ctx.drawImage(bagFrontImg, r.x, r.y, r.w, r.h);
   }
 
   function resetGame(){
@@ -980,6 +1002,10 @@
 
     backgroundWorldBottom = canvasH;
     spawnBlock();
+
+    lastHudScore = -1;
+    hudScore.textContent = 'Подарков собрано: 0';
+    hudScore.style.color = '#000';
   }
 
   function spawnBlock(){
@@ -1165,11 +1191,9 @@
       const screenY = block.y + offsetY;
       if (screenY + block.h < -100 || screenY > canvasH + 100) continue;
 
-      const x = block.x + swayOffset;
-      const y = screenY;
-
-      if (block.img) ctx.drawImage(block.img, x, y, block.w, block.h);
-      else { ctx.fillStyle = block.color || '#66bb6a'; ctx.fillRect(x, y, block.w, block.h); }
+      const r = snapRect(block.x + swayOffset, screenY, block.w, block.h);
+      if (block.img) ctx.drawImage(block.img, r.x, r.y, r.w, r.h);
+      else { ctx.fillStyle = block.color || '#66bb6a'; ctx.fillRect(r.x, r.y, r.w, r.h); }
     }
   }
 
@@ -1178,21 +1202,9 @@
     const screenY = current.y + offsetY;
     if (screenY + current.h < -100 || screenY > canvasH + 100) return;
 
-    const x = current.x + swayOffset;
-    const y = screenY;
-
-    if (current.img) ctx.drawImage(current.img, x, y, current.w, current.h);
-    else { ctx.fillStyle = current.color || '#66bb6a'; ctx.fillRect(x, y, current.w, current.h); }
-  }
-
-  function drawScore(){
-    ctx.save();
-    ctx.font = '18px Futura, Arial, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillStyle = (score >= 50) ? '#ffffff' : '#000000';
-    ctx.fillText('Подарков собрано: ' + score, 8, 6);
-    ctx.restore();
+    const r = snapRect(current.x + swayOffset, screenY, current.w, current.h);
+    if (current.img) ctx.drawImage(current.img, r.x, r.y, r.w, r.h);
+    else { ctx.fillStyle = current.color || '#66bb6a'; ctx.fillRect(r.x, r.y, r.w, r.h); }
   }
 
   function updateComboFloat(dt60){
@@ -1281,10 +1293,16 @@
 
     drawTower(swayOffset);
     drawCurrent(swayOffset);
-    drawScore();
     drawComboFloat(swayOffset);
 
     drawBagFront();
+
+    // ✅ HUD-счётчик как DOM — обновляем только когда меняется
+    if (score !== lastHudScore){
+      hudScore.textContent = 'Подарков собрано: ' + score;
+      hudScore.style.color = (score >= 50) ? '#fff' : '#000';
+      lastHudScore = score;
+    }
 
     if (!gameOver && current){
       const last = tower[tower.length - 1];
@@ -1499,20 +1517,15 @@
 
       assignLoadedAssets(results);
 
-      const essentialOk =
-        ['A','B','C','D','F'].every(id => (FLOOR_IMAGES[id]||[]).length > 0) &&
-        !!backgroundImg && !!bonusImg && !!coilImg && !!bagFrontImg && !!bagBackImg;
+      const essentialMissing = missing.filter(u => /Tip[A-Z]-\d+\.webp/i.test(u));
+      const essentialOk = ['A','B','C','D','F'].every(id => (FLOOR_IMAGES[id]||[]).length > 0);
 
       if (!essentialOk){
-        const essentialMissing = missing.filter(u => /Tip[A-Z]-\d+\.webp/i.test(u));
         alert(
-          'Не удалось загрузить ассеты (Tip*.webp и/или основные картинки).\n\n' +
-          'Проверь имена и путь. Вот URL, которые НЕ открылись:\n\n' +
+          'Не удалось загрузить Tip*.webp. Вот URL, которые НЕ открылись:\n\n' +
           essentialMissing.slice(0, 40).map(x => `- ${x}`).join('\n') +
           (essentialMissing.length > 40 ? '\n\n...и ещё ' + (essentialMissing.length - 40) + ' шт.' : '')
         );
-        // не стартуем, чтобы не было зелёных квадратов
-        return;
       }
 
       warmLb();
@@ -1523,7 +1536,7 @@
       resetGame();
     }catch(err){
       console.error('Preload failed', err);
-      alert('Ошибка загрузки ассетов. Проверь, что файлы реально лежат рядом с index.html и названия совпадают (TipA-1.webp и т.д.).');
+      alert('Ошибка загрузки ассетов. Проверь, что файлы лежат рядом с index.html и названия совпадают (TipA-1.webp и т.д.).');
     }
   }
 
